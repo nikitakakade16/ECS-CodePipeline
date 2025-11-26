@@ -1,34 +1,27 @@
 version: 0.2
 
-env:
-  variables:
-    AWS_ACCOUNT_ID: "545101823957"
-    AWS_DEFAULT_REGION: "us-east-2"
-    REPOSITORY_URI: "545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app"
-    IMAGE_TAG: "latest"
-
 phases:
   pre_build:
     commands:
       - echo "Logging in to Amazon ECR..."
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 545101823957.dkr.ecr.us-east-2.amazonaws.com
       - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - 'if [ -n "$COMMIT_HASH" ]; then IMAGE_TAG=$COMMIT_HASH; fi'
+      - IMAGE_TAG=$COMMIT_HASH
       - echo "Using IMAGE_TAG: $IMAGE_TAG"
 
   build:
     commands:
       - echo "Building Docker image..."
-      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
-      - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
+      - docker build -t 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:$IMAGE_TAG .
+      - docker tag 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:$IMAGE_TAG 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
 
   post_build:
     commands:
       - echo "Pushing Docker images..."
-      - docker push $REPOSITORY_URI:$IMAGE_TAG
-      - docker push $REPOSITORY_URI:latest
-      - echo "Writing image definitions file..."
-      - printf '[{"name":"my-app-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+      - docker push 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:$IMAGE_TAG
+      - docker push 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
+      - echo "Writing imagedefinitions.json..."
+      - printf '[{"name":"my-app-container","imageUri":"545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:%s"}]' $IMAGE_TAG > imagedefinitions.json
 
 artifacts:
   files:
