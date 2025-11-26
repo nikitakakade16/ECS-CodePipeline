@@ -1,24 +1,32 @@
 version: 0.2
 
+env:
+  variables:
+    AWS_ACCOUNT_ID: "545101823957"
+    AWS_DEFAULT_REGION: "us-east-2"
+    REPOSITORY_URI: "545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app"
+    IMAGE_TAG: "latest"
+
 phases:
   pre_build:
     commands:
       - echo "Logging in to Amazon ECR..."
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
       - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
-      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - if [ -n "$COMMIT_HASH" ]; then IMAGE_TAG=$COMMIT_HASH; fi
+      - echo "Using IMAGE_TAG: $IMAGE_TAG"
 
   build:
     commands:
       - echo "Building Docker image..."
-      - docker build -t $REPOSITORY_URI:latest .
-      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
 
   post_build:
     commands:
       - echo "Pushing Docker images..."
-      - docker push $REPOSITORY_URI:latest
       - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:latest
       - echo "Writing image definitions file..."
       - printf '[{"name":"my-app-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
 
