@@ -1,24 +1,112 @@
 version: 0.2
 
+env:
+  variables:
+    AWS_REGION: "us-east-2"
+    AWS_ACCOUNT_ID: "545101823957"
+
+    # YOUR REAL VALUES
+    CLUSTER_NAME: "my-fargate-cluster2"
+    SERVICE_NAME: "my-app-task-service-2gmlluai"
+    ECR_REPO: "my-new-app"
+
+    TASK_FAMILY: "my-app-taskdef"
+    CODEDEPLOY_APP: "MyECSApp"
+    CODEDEPLOY_GROUP: "MyECSDeploymentGroup"
+
+    # YOU MUST HAVE 2 TARGET GROUPS IN ALB
+    PRODUCTION_TG: "my-app-prod-tg"
+    TEST_TG: "my-app-test-tg"
+
+    CONTAINER_NAME: "my-app-container"
+    CONTAINER_PORT: "80"
+
 phases:
+
   pre_build:
     commands:
-      - echo Logging in to Amazon ECR...
-      - echo Using IMAGE_URI 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
-      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 545101823957.dkr.ecr.us-east-2.amazonaws.com
+      - echo Logging into Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:latest
+      - echo Using IMAGE URI: $IMAGE_URI
 
   build:
     commands:
       - echo Building Docker image...
-      - docker build -t 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest .
+      - docker build -t $IMAGE_URI .
+      - echo Pushing Docker image to ECR...
+      - docker push $IMAGE_URI
 
   post_build:
     commands:
-      - echo Pushing Docker image to ECR...
-      - docker push 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
-      - echo Creating imagedefinitions.json for CodeDeploy...
-      - printf '[{"name":"my-app-container","imageUri":"%s"}]' 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest > imagedefinitions.json
+
+      - echo Creating imagedefinitions.json artifact...
+      - printf '[{"name":"%s","imageUri":"%s"}]' $CONTAINER_NAME $IMAGE_URI > imagedefinitions.json
+
+      - echo Creating ECS task definition JSON...
+      - |
+        cat <<EOF > taskdef.json
+        {
+          "family": "$TASK_FAMILY",
+          "networkMode": "awsvpc",
+          "requiresCompatibilities": ["FARGATE"],
+          "cpu": "256",
+          "memory": "512",
+          "executionRoleArn": "arn:aws:iam::$AWS_ACCOUNT_ID:role/ecsTaskExecutionRole",
+          "containerDefinitions": [
+            {
+              "name": "$CONTAINER_NAME",
+              "image": "$IMAGE_URI",
+              "essential": true,
+              "portMappings": [
+                {
+                  "containerPort": $CONTAINER_PORT,
+                  "protocol": "tcp"
+                }
+              ]
+            }
+          ]
+        }
+        EOF
+
+      - echo Registering new task definition revision...
+      - TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://taskdef.json --query 'taskDefinition.taskDefinitionArn' --output text)
+      - echo Task definition registered: $TASK_DEF_ARN
+
+      - echo Creating CodeDeploy Application if missing...
+      - |
+        if ! aws deploy get-application --application-name $CODEDEPLOY_APP >/dev/null 2>&1; then
+            aws deploy create-application --application-name $CODEDEPLOY_APP --compute-platform ECS
+            echo Created CodeDeploy Application: $CODEDEPLOY_APP
+        else
+            echo CodeDeploy Application already exists
+        fi
+
+      - echo Creating CodeDeploy Deployment Group if missing...
+      - |
+        if ! aws deploy get-deployment-group --application-name $CODEDEPLOY_APP --deployment-group-name $CODEDEPLOY_GROUP >/dev/null 2>&1; then
+            aws deploy create-deployment-group \
+              --application-name $CODEDEPLOY_APP \
+              --deployment-group-name $CODEDEPLOY_GROUP \
+              --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
+              --service-role-arn arn:aws:iam::$AWS_ACCOUNT_ID:role/CodeDeployECSRole \
+              --ecs-services clusterName=$CLUSTER_NAME,serviceName=$SERVICE_NAME \
+              --target-group-info name=$PRODUCTION_TG \
+              --blue-green-deployment-configuration "{}"
+            echo Created Deployment Group: $CODEDEPLOY_GROUP
+        else
+            echo Deployment Group already exists
+        fi
+
+      - echo Triggering Blue/Green deployment...
+      - |
+        aws deploy create-deployment \
+          --application-name $CODEDEPLOY_APP \
+          --deployment-group-name $CODEDEPLOY_GROUP \
+          --revision "{\"revisionType\":\"AppSpecContent\",\"appSpecContent\":{\"content\":\"$(cat appspec.yaml | sed 's/\"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')\"}}"
 
 artifacts:
   files:
     - imagedefinitions.json
+    - taskdef.json
+    - appspec.yaml
