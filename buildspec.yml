@@ -1,23 +1,39 @@
 version: 0.2
 
+env:
+  variables:
+    AWS_DEFAULT_REGION: us-east-2
+    IMAGE_REPO_NAME: my-new-app
+    IMAGE_TAG: latest
+  computed:
+    AWS_ACCOUNT_ID: $(aws sts get-caller-identity --query Account --output text)
+
 phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
-      - echo Using IMAGE_URI: 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
-      - aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 545101823957.dkr.ecr.us-east-2.amazonaws.com
+      - echo "AWS Account ID: $AWS_ACCOUNT_ID"
+      - echo "Region: $AWS_DEFAULT_REGION"
+      - echo "Repository: $IMAGE_REPO_NAME"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - IMAGE_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME:$IMAGE_TAG
+      - echo "Using IMAGE_URI: $IMAGE_URI"
 
   build:
     commands:
+      - echo Build started on `date`
       - echo Building Docker image...
-      - docker build -t 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest .
+      - docker build -t $IMAGE_URI .
+      - echo Build completed on `date`
 
   post_build:
     commands:
       - echo Pushing Docker image to ECR...
-      - docker push 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest
-      - echo Creating imagedefinitions.json for CodeDeploy...
-      - printf '[{"name":"my-app-container","imageUri":"%s"}]' 545101823957.dkr.ecr.us-east-2.amazonaws.com/my-new-app:latest > imagedefinitions.json
+      - docker push $IMAGE_URI
+      - echo Push completed on `date`
+      - echo Creating imagedefinitions.json for ECS deployment...
+      - printf '[{"name":"my-app-container","imageUri":"%s"}]' $IMAGE_URI > imagedefinitions.json
+      - cat imagedefinitions.json
 
 artifacts:
   files:
